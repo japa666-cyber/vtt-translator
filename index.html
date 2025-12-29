@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VTT Translator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.json">
+
+<style>
+:root {
+  --bg:#0f0f0f; --fg:#eee; --box:#1a1a1a; --btn:#1abc9c;
+}
+.light {
+  --bg:#f4f4f4; --fg:#111; --box:#fff; --btn:#3498db;
+}
+body {
+  background:var(--bg); color:var(--fg);
+  font-family:Arial; padding:20px;
+}
+input, textarea, button {
+  width:100%; margin:6px 0; padding:10px;
+  background:var(--box); color:var(--fg);
+  border:1px solid #555;
+}
+button {
+  background:var(--btn); border:0; font-size:16px;
+  cursor:pointer;
+}
+textarea { height:200px; }
+small { opacity:.7 }
+#preview {
+  background:#000; color:#0f0; padding:10px;
+  font-family:monospace; min-height:80px;
+}
+</style>
+</head>
+
+<body>
+<h2>🌍 VTT Subtitle Translator</h2>
+
+<button onclick="toggleTheme()">🌓 Dark / Light</button>
+
+<input type="file" id="file" accept=".vtt">
+<input id="url" placeholder="📡 VTT URL (CORS-safe only)">
+<input id="target" value="hr">
+
+<button id="go" onclick="processVTT()">🔁 Translate</button>
+
+<textarea id="output" placeholder="Translated VTT..."></textarea>
+
+<h3>🎬 Subtitle preview</h3>
+<div id="preview">Waiting…</div>
+
+<button onclick="download()">💾 Download VTT</button>
+<small id="info"></small>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+
+function toggleTheme(){
+  document.body.classList.toggle("light");
+}
+
+async function fetchVTT(){
+  const f=document.getElementById("file").files[0];
+  const u=document.getElementById("url").value.trim();
+  if(f) return await f.text();
+  if(u) return await fetch(u).then(r=>r.text());
+  alert("Upload file or enter URL");
+}
+
+function normalizeVTT(text){
+  const lines=text.split(/\r?\n/);
+  let out=["WEBVTT",""];
+  for(let l of lines){
+    if(l.includes("-->")) out.push(l);
+    else if(l.trim() && !l.startsWith("NOTE") && !l.match(/^\d+$/))
+      out.push(l.trim());
+  }
+  return out.join("\n");
+}
+
+async function translateBatch(txt,target){
+  const url=`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(txt)}`;
+  const r=await fetch(url);
+  const j=await r.json();
+  return j[0].map(x=>x[0]).join("");
+}
+
+async function processVTT(){
+  const btn=document.getElementById("go");
+  btn.disabled=true;
+
+  let raw=await fetchVTT();
+  raw=normalizeVTT(raw);
+
+  const lines=raw.split(/\r?\n/);
+  let blocks=[],i=0;
+  while(i<lines.length){
+    if(lines[i].includes("-->")){
+      let t=lines[i++];
+      let txt=[];
+      while(i<lines.length && lines[i].trim()){
+        txt.push(lines[i++]);
+      }
+      blocks.push({t,txt:txt.join(" ")});
+    }
+    i++;
+  }
+
+  let out=["WEBVTT","Kind: subtitles",`Language: ${target.value}`,""];
+  for(let i=0;i<blocks.length;i+=5){
+    info.innerText=`Translating ${i}/${blocks.length}`;
+    const b=blocks.slice(i,i+5);
+    const joined=b.map(x=>x.txt).join("\n###\n");
+    const tr=await translateBatch(joined,target.value);
+    const p=tr.split("\n###\n");
+    b.forEach((x,n)=>{
+      out.push(x.t);
+      out.push(p[n]||x.txt);
+      out.push("");
+    });
+    await new Promise(r=>setTimeout(r,600));
+  }
+
+  output.value=out.join("\n");
+  preview.innerText=blocks[0]?.txt || "";
+  btn.disabled=false;
+}
+
+function download(){
+  const blob=new Blob([output.value],{type:"text/vtt"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="translated.vtt";
+  a.click();
+}
+</script>
+</body>
+</html>
